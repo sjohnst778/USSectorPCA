@@ -138,3 +138,46 @@ def pc_scores_chart(result: PCAResult) -> go.Figure:
     fig.update_xaxes(showticklabels=True, row=n, col=1)
 
     return fig
+
+
+def rolling_variance_chart(ev_df: "pd.DataFrame", title: str = "Rolling Explained Variance") -> go.Figure:
+    """Line chart of rolling explained variance ratio for each PC over time."""
+    colors = px.colors.qualitative.Plotly
+    fig = go.Figure()
+    for i, col in enumerate(ev_df.columns):
+        fig.add_scatter(
+            x=ev_df.index,
+            y=ev_df[col] * 100,
+            mode="lines",
+            name=col,
+            line=dict(color=colors[i % len(colors)], width=1.5),
+        )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Variance Explained (%)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        height=320,
+        margin=dict(t=60, b=40),
+    )
+    return fig
+
+
+def rolling_loadings_heatmap(loadings_df: "pd.DataFrame", title: str = "Rolling PC1 Loadings") -> go.Figure:
+    """Heatmap of rolling loadings: x=date, y=ticker/name, colour=loading value."""
+    fig = px.imshow(
+        loadings_df.T,
+        color_continuous_scale="RdBu_r",
+        color_continuous_midpoint=0,
+        zmin=-1,
+        zmax=1,
+        aspect="auto",
+        title=title,
+        labels=dict(x="Date", y="", color="Loading"),
+    )
+    fig.update_layout(
+        height=320,
+        margin=dict(t=60, b=40),
+        coloraxis_colorbar=dict(thickness=12, len=0.8),
+    )
+    return fig

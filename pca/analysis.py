@@ -94,3 +94,64 @@ def run_pca(
         matrix_type=effective_matrix,
         standardized=standardize,
     )
+
+
+def run_rolling_pca(
+    returns: pd.DataFrame,
+    window: int = 252,
+    n_components: int = 3,
+    use_shrinkage: bool = False,
+    standardize: bool = True,
+    matrix_type: str = "correlation",
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """Run PCA on rolling windows and return time series of results.
+
+    Sign ambiguity is resolved by aligning each window's eigenvectors to the
+    previous window via dot product sign — preventing abrupt colour inversions
+    in the loadings heatmap. The first window uses sklearn's convention
+    (largest absolute loading per component is positive).
+
+    Returns:
+        explained_variance: DataFrame (dates × PC labels) of variance ratios
+        loadings: dict of PC label → DataFrame (dates × tickers) of loadings
+    """
+    n = len(returns)
+    if n < window:
+        return pd.DataFrame(), {}
+
+    tickers = returns.columns.tolist()
+    pc_labels = [f"PC{k + 1}" for k in range(n_components)]
+    dates, ev_rows = [], []
+    loading_rows: dict[str, list] = {pc: [] for pc in pc_labels}
+    prev_L: np.ndarray | None = None
+
+    for i in range(window, n + 1):
+        result = run_pca(
+            returns.iloc[i - window:i], n_components,
+            use_shrinkage, standardize, matrix_type,
+        )
+        L = result.loadings.values.copy()  # (tickers, components)
+
+        if prev_L is None:
+            # First window: largest absolute loading per component is positive
+            signs = np.sign(L[np.abs(L).argmax(axis=0), np.arange(n_components)])
+            signs[signs == 0] = 1.0
+            L *= signs
+        else:
+            # Align sign with previous window to avoid spurious flips
+            for k in range(n_components):
+                if np.dot(prev_L[:, k], L[:, k]) < 0:
+                    L[:, k] *= -1
+
+        prev_L = L.copy()
+        dates.append(returns.index[i - 1])
+        ev_rows.append(result.explained_variance_ratio)
+        for k, pc in enumerate(pc_labels):
+            loading_rows[pc].append(L[:, k])
+
+    ev_df = pd.DataFrame(ev_rows, index=dates, columns=pc_labels)
+    loadings_dfs = {
+        pc: pd.DataFrame(rows, index=dates, columns=tickers)
+        for pc, rows in loading_rows.items()
+    }
+    return ev_df, loadings_dfs

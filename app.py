@@ -5,7 +5,7 @@ import pandas as pd
 
 from pca.data import fetch_adjusted_close
 from pca.returns import compute_returns, compute_relative_returns, compute_period_stats
-from pca.analysis import run_pca, PCAResult
+from pca.analysis import run_pca, run_rolling_pca, PCAResult
 from pca.holdings import fetch_etf_holdings
 from pca import plots
 
@@ -66,6 +66,29 @@ REGIONS = {
             "EXI":  (date(2006, 9, 27), "Industrials"),
             "MXI":  (date(2006, 9, 22), "Materials"),
             "JXI":  (date(2006, 9, 22), "Utilities"),
+        },
+    },
+    "US — Style Factors": {
+        "etfs": ["IWF", "VTV", "IWM", "USMV", "MTUM", "QUAL", "VLUE", "SIZE"],
+        "benchmark": "SPY",
+        "benchmark_name": "S&P 500",
+        "currency": "USD",
+        "names": {
+            "IWF":  "Growth",
+            "VTV":  "Value (Broad)",
+            "IWM":  "Small Cap",
+            "USMV": "Min Volatility",
+            "MTUM": "Momentum",
+            "QUAL": "Quality",
+            "VLUE": "Value (Factor)",
+            "SIZE": "Size",
+        },
+        "history_warnings": {
+            "USMV": (date(2011, 10, 20), "Min Volatility"),
+            "MTUM": (date(2013, 4, 18), "Momentum"),
+            "QUAL": (date(2013, 7, 18), "Quality"),
+            "VLUE": (date(2013, 4, 18), "Value (Factor)"),
+            "SIZE": (date(2013, 4, 18), "Size"),
         },
     },
 }
@@ -370,6 +393,71 @@ with col_rel:
     if result_rel.shrinkage_coefficient is not None:
         r_cols[3].metric("LW shrinkage α", f"{result_rel.shrinkage_coefficient:.3f}")
     _pca_tabs("rel", result_rel, n_comp, relative_returns)
+
+# --- Rolling PCA ---
+st.divider()
+st.subheader("Rolling PCA")
+st.caption("How factor structure and sector exposures evolve through time.")
+
+_min_window = 63
+if sector_returns.shape[0] < _min_window:
+    st.info("Not enough data for rolling PCA — select a longer date range.")
+else:
+    _r_col1, _r_col2, _r_col3 = st.columns([2, 2, 3])
+    roll_window = _r_col1.select_slider(
+        "Rolling window",
+        options=[63, 126, 252],
+        value=252,
+        format_func=lambda v: {63: "1 quarter", 126: "6 months", 252: "1 year"}[v],
+    )
+    roll_pc = _r_col2.radio("Loadings to display", ["PC1", "PC2"], horizontal=True)
+    _r_col3.caption(
+        "**Explained variance** — how much of total cross-sectional variation each PC captures over time.  \n"
+        "**Loadings** — which sectors drive each factor and how that changes."
+    )
+
+    with st.spinner("Computing rolling PCA…"):
+        _roll_kwargs = dict(
+            window=roll_window,
+            n_components=min(3, n_comp),
+            use_shrinkage=pca_kwargs["use_shrinkage"],
+            standardize=pca_kwargs["standardize"],
+            matrix_type=pca_kwargs["matrix_type"],
+        )
+        _ev_abs, _ld_abs = run_rolling_pca(sector_returns, **_roll_kwargs)
+        _ev_rel, _ld_rel = run_rolling_pca(relative_returns, **_roll_kwargs)
+
+    # Rename ticker columns to sector names for readability
+    def _rename_cols(df):
+        return df.rename(columns=SECTOR_NAMES) if not df.empty else df
+
+    _rc_abs, _rc_rel = st.columns(2)
+    with _rc_abs:
+        st.markdown("**Absolute Returns**")
+        st.plotly_chart(
+            plots.rolling_variance_chart(_ev_abs, "Rolling Explained Variance — Absolute"),
+            use_container_width=True,
+        )
+        st.plotly_chart(
+            plots.rolling_loadings_heatmap(
+                _rename_cols(_ld_abs[roll_pc]),
+                f"Rolling {roll_pc} Loadings — Absolute",
+            ),
+            use_container_width=True,
+        )
+    with _rc_rel:
+        st.markdown(f"**Relative Returns (vs {_benchmark_name})**")
+        st.plotly_chart(
+            plots.rolling_variance_chart(_ev_rel, "Rolling Explained Variance — Relative"),
+            use_container_width=True,
+        )
+        st.plotly_chart(
+            plots.rolling_loadings_heatmap(
+                _rename_cols(_ld_rel[roll_pc]),
+                f"Rolling {roll_pc} Loadings — Relative",
+            ),
+            use_container_width=True,
+        )
 
 # --- Constituent drill-down ---
 st.divider()
