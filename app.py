@@ -206,6 +206,22 @@ def _style_stats(df: "pd.DataFrame") -> "pd.io.formats.style.Styler":
     return styler
 
 
+def _with_benchmark_row(
+    stats_df: "pd.DataFrame",
+    bm_series: "pd.Series",
+    method: str,
+    bm_ticker: str,
+    bm_name: str,
+) -> "pd.DataFrame":
+    """Prepend a benchmark row (beta=1 by definition) to a period stats DataFrame."""
+    bm_stats = compute_period_stats(bm_series.to_frame(), method=method).reset_index()
+    bm_stats.columns = ["ticker", "beta", "total_return", "ann_return", "ann_volatility", "risk_adjusted"]
+    bm_stats["ticker"] = bm_ticker
+    bm_stats["beta"] = 1.0
+    bm_stats.insert(1, "name", bm_name)
+    return pd.concat([bm_stats, stats_df], ignore_index=True)
+
+
 def _pca_tabs(label: str, result: PCAResult, n_comp: int, returns: "pd.DataFrame") -> None:
     tab1, tab2, tab3, tab4 = st.tabs(["Scree", "Loadings", "Biplot", "Correlation"])
     with tab1:
@@ -363,6 +379,7 @@ with st.expander("Period Statistics"):
     stats_df = stats.reset_index()
     stats_df.columns = ["ticker", "beta", "total_return", "ann_return", "ann_volatility", "risk_adjusted"]
     stats_df.insert(1, "name", stats_df["ticker"].map(SECTOR_NAMES).fillna(""))
+    stats_df = _with_benchmark_row(stats_df, benchmark_series, return_type, BENCHMARK, _benchmark_name)
     st.dataframe(_style_stats(stats_df), use_container_width=True, hide_index=True)
 
 st.divider()
@@ -607,6 +624,9 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
                         "weight_coverage": weight_coverage,
                         "period_stats": compute_period_stats(c_rel_rets, method=return_type, benchmark=c_all_rets[bm_col]),
                         "rel_rets": c_rel_rets,
+                        "bm_series": c_all_rets[bm_col],
+                        "bm_ticker": bm_col,
+                        "bm_name": _benchmark_name,
                     }
                 }
     else:
@@ -653,6 +673,7 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
             loadings_df = _build_loadings_table(
                 c_result, holdings[["symbol", "name", "weight"]], n_c_comp
             )
+            _bm_name = _benchmark_name if use_market_bm else f"{SECTOR_NAMES.get(etf, etf)} ({etf})"
             drill_results[etf] = {
                 "result": c_result,
                 "loadings_df": loadings_df,
@@ -660,8 +681,11 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
                 "merged": False,
                 "weight_coverage": {etf: holdings["weight"].sum()},
                 "period_stats": compute_period_stats(c_rel_rets, method=return_type, benchmark=c_all_rets[bm_ticker]),
-                "bm_label": _benchmark_name if use_market_bm else etf,
+                "bm_label": _bm_name,
                 "rel_rets": c_rel_rets,
+                "bm_series": c_all_rets[bm_ticker],
+                "bm_ticker": bm_ticker,
+                "bm_name": _bm_name,
             }
 
         st.session_state["drill_results"] = drill_results
@@ -691,6 +715,9 @@ if "drill_results" in st.session_state:
             c_stats_df = c_stats.reset_index()
             c_stats_df.columns = ["ticker", "beta", "total_return", "ann_return", "ann_volatility", "risk_adjusted"]
             c_stats_df.insert(1, "name", c_stats_df["ticker"].map(name_map).fillna(""))
+            c_stats_df = _with_benchmark_row(
+                c_stats_df, data["bm_series"], return_type, data["bm_ticker"], data["bm_name"]
+            )
             st.dataframe(_style_stats(c_stats_df), use_container_width=True, hide_index=True)
 
         _render_loadings_table(data["loadings_df"], data["result"], data["n_c_comp"], extra_cols=["sector"] if data.get("merged") else None)
