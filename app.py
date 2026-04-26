@@ -332,7 +332,7 @@ col_abs, col_rel = st.columns(2)
 
 with col_abs:
     st.subheader("Absolute Returns PCA")
-    st.caption("PCA on raw sector returns — PC1 typically captures the broad market factor.")
+    st.caption("PCA on raw sector returns — PC1 typically captures the broad market factor. PC2 is often Risk On/Risk Off.")
     n_met = 4 if result_abs.shrinkage_coefficient is not None else 3
     a_cols = st.columns(n_met)
     a_cols[0].metric("Variance explained (all PCs)", f"{result_abs.cumulative_variance[-1]*100:.1f}%")
