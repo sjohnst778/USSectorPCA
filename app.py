@@ -132,6 +132,7 @@ with st.sidebar:
     run = st.button("Run PCA", type="primary", use_container_width=True)
 
 # --- Helpers ---
+
 def _style_stats(df: "pd.DataFrame") -> "pd.io.formats.style.Styler":
     """Format and heatmap a period statistics DataFrame.
 
@@ -178,7 +179,14 @@ def _pca_tabs(label: str, result: PCAResult, n_comp: int, returns: "pd.DataFrame
     with tab2:
         st.plotly_chart(plots.loadings_heatmap(result), use_container_width=True)
         with st.expander("Loadings table"):
-            st.dataframe(result.loadings.style.background_gradient(cmap="RdBu_r", axis=None))
+            loadings_display = result.loadings.copy()
+            loadings_display.insert(0, "name", loadings_display.index.map(SECTOR_NAMES).fillna(""))
+            st.dataframe(
+                loadings_display.style.background_gradient(
+                    subset=result.loadings.columns.tolist(), cmap="RdBu_r", axis=None
+                ),
+                use_container_width=True,
+            )
     with tab3:
         pc_opts = [f"PC{i+1}" for i in range(n_comp)]
         c1, c2 = st.columns(2)
@@ -288,7 +296,8 @@ end_date         = _s["end_date"]
 return_type      = _s["return_type"]
 _region_key      = _s["region_key"]
 SECTOR_NAMES     = _s["sector_names"]
-BENCHMARK        = _s.get("benchmark_name", "benchmark")
+BENCHMARK        = benchmark_series.name          # ticker symbol e.g. "SPY", "EXSA.DE"
+_benchmark_name  = _s.get("benchmark_name", BENCHMARK)
 _currency        = _s.get("currency", "USD")
 
 st.title(f"Equity Return PCA — {_region_key}")
@@ -328,7 +337,7 @@ with col_abs:
 
 with col_rel:
     st.subheader("Relative Returns PCA")
-    st.caption(f"PCA on sector returns minus {BENCHMARK} — isolates rotation dynamics beyond the market.")
+    st.caption(f"PCA on sector returns minus {_benchmark_name} — isolates rotation dynamics beyond the market.")
     n_met = 4 if result_rel.shrinkage_coefficient is not None else 3
     r_cols = st.columns(n_met)
     r_cols[0].metric("Variance explained (all PCs)", f"{result_rel.cumulative_variance[-1]*100:.1f}%")
@@ -354,22 +363,34 @@ merge_constituents = st.checkbox(
     value=False,
     help=(
         "When checked, all holdings from the selected ETFs are pooled into a single PCA "
-        "relative to SPY — useful for seeing how stocks from different sectors interleave "
-        "in factor space. When unchecked, a separate PCA is run for each ETF relative to "
-        "that ETF's own return."
+        f"relative to {_benchmark_name} — useful for seeing how stocks from different sectors "
+        "interleave in factor space. When unchecked, a separate PCA is run for each ETF."
     ),
 )
 
 if merge_constituents:
+    constituent_benchmark = "market"   # sentinel — always vs market in merged mode
     st.caption(
-        "Merged mode: single PCA across all selected ETF constituents, relative to SPY. "
-        "Sector column identifies the source ETF for each stock."
+        f"Merged mode: single PCA across all selected ETF constituents, relative to "
+        f"{_benchmark_name} ({BENCHMARK}). Sector column identifies the source ETF."
     )
 else:
-    st.caption(
-        "Separate mode: one PCA per ETF, each relative to that ETF's own return. "
-        "Holdings sourced from yfinance (top 10 by weight)."
+    constituent_benchmark = st.radio(
+        "Constituent benchmark",
+        ["vs sector ETF", f"vs {_benchmark_name}"],
+        index=0,
+        horizontal=True,
+        help=(
+            "**vs sector ETF**: strips the sector's own return to reveal within-sector "
+            "sub-factors (e.g. semis vs software within XLK).\n\n"
+            f"**vs {_benchmark_name}**: strips the market return to show which constituents "
+            "are leading or lagging the index."
+        ),
     )
+    if constituent_benchmark == "vs sector ETF":
+        st.caption("Separate mode: one PCA per ETF, each relative to that ETF's own return.")
+    else:
+        st.caption(f"Separate mode: one PCA per ETF, each relative to {_benchmark_name} ({BENCHMARK}).")
 
 def _build_loadings_table(c_result, holdings_df, n_c_comp):
     """Join PCA loadings with holdings metadata and sort by |PC1|."""
@@ -426,7 +447,7 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
         with st.spinner(f"Fetching price data for {len(all_syms)} stocks…"):
             c_prices = fetch_adjusted_close(fetch_list, str(start_date), str(end_date))
 
-        bm_ticker = _s["pca"]["benchmark_series"].name if "pca" in st.session_state else BENCHMARK
+        bm_ticker = BENCHMARK
         available = [t for t in all_syms if t in c_prices.columns]
         bm_in_prices = any(t in c_prices.columns for t in [bm_ticker, BENCHMARK])
 
@@ -471,31 +492,33 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
                 }
     else:
         drill_results = {}
+        use_market_bm = constituent_benchmark != "vs sector ETF"
+
         for etf, holdings in all_holdings.items():
             constituent_tickers = holdings["symbol"].tolist()
-            fetch_list = list(dict.fromkeys(constituent_tickers + [etf]))
+            bm_ticker = BENCHMARK if use_market_bm else etf
+            fetch_list = list(dict.fromkeys(constituent_tickers + [etf, BENCHMARK] if use_market_bm else constituent_tickers + [etf]))
 
             with st.spinner(f"Fetching price data for {etf} constituents…"):
                 c_prices = fetch_adjusted_close(fetch_list, str(start_date), str(end_date))
 
             available_constituents = [t for t in constituent_tickers if t in c_prices.columns]
-            if etf not in c_prices.columns:
-                drill_results[etf] = {"error": f"Could not retrieve {etf} price data for benchmarking."}
+            if bm_ticker not in c_prices.columns:
+                drill_results[etf] = {"error": f"Could not retrieve benchmark ({bm_ticker}) for {etf}."}
                 continue
             if len(available_constituents) < 3:
                 drill_results[etf] = {"error": f"Fewer than 3 constituents have data for {etf}."}
                 continue
 
-            c_all_rets = compute_returns(
-                c_prices[available_constituents + [etf]], method=return_type
-            )
+            price_cols = list(dict.fromkeys(available_constituents + [bm_ticker]))
+            c_all_rets = compute_returns(c_prices[price_cols], method=return_type)
             # Re-filter after compute_returns — it may drop tickers with too many missing values
             available_constituents = [t for t in available_constituents if t in c_all_rets.columns]
             if len(available_constituents) < 3:
                 drill_results[etf] = {"error": f"Fewer than 3 constituents have sufficient data for {etf} after cleaning."}
                 continue
 
-            c_rel_rets = compute_relative_returns(c_all_rets[available_constituents], c_all_rets[etf])
+            c_rel_rets = compute_relative_returns(c_all_rets[available_constituents], c_all_rets[bm_ticker])
 
             n_c_comp = min(2, len(available_constituents))
             c_result = run_pca(c_rel_rets, **{**pca_kwargs, "n_components": n_c_comp})
@@ -509,7 +532,8 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
                 "n_c_comp": n_c_comp,
                 "merged": False,
                 "weight_coverage": {etf: holdings["weight"].sum()},
-                "period_stats": compute_period_stats(c_rel_rets, method=return_type, benchmark=c_all_rets[etf]),
+                "period_stats": compute_period_stats(c_rel_rets, method=return_type, benchmark=c_all_rets[bm_ticker]),
+                "bm_label": _benchmark_name if use_market_bm else etf,
             }
 
         st.session_state["drill_results"] = drill_results
@@ -528,7 +552,8 @@ if "drill_results" in st.session_state:
             cov_parts = [f"{etf}: {w:.1f}%" for etf, w in coverage.items()]
             st.caption(f"Top 10 holdings coverage — {' | '.join(cov_parts)}")
         else:
-            st.markdown(f"#### {key} — {SECTOR_NAMES.get(key, key)}")
+            bm_label = data.get("bm_label", key)
+            st.markdown(f"#### {key} — {SECTOR_NAMES.get(key, key)}  ·  vs {bm_label}")
             total_w = coverage.get(key, 0.0)
             st.caption(f"Top 10 holdings represent **{total_w:.1f}%** of {key}")
 
