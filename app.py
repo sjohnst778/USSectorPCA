@@ -203,6 +203,11 @@ def _style_stats(df: "pd.DataFrame") -> "pd.io.formats.style.Styler":
     styler = display.style.format(fmt)
     styler = _diverging(styler, "Ann. Return")
     styler = _diverging(styler, "Risk-Adjusted")
+    # Bold the benchmark row (always first)
+    styler = styler.apply(
+        lambda x: ["font-weight: bold" if x.name == 0 else "" for _ in x],
+        axis=1,
+    )
     return styler
 
 
