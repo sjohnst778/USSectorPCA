@@ -70,13 +70,14 @@ Hosted on **Streamlit Community Cloud** via GitHub repo `USSectorPCA`.
 ---
 
 ## Usage
-1. Tick **Use S&P 500 sector preset** (default on) or enter custom tickers
-2. Use the **ⓘ** popover next to the preset checkbox to look up ticker names
-3. Set date range, return type (log/simple), number of components
-4. Configure PCA options: standardise, matrix type (correlation/covariance), Ledoit-Wolf shrinkage
-5. Click **Run PCA** — results persist in session state
-6. Inspect the side-by-side **Absolute** and **Relative** PCA panels, each with tabs: Scree | Loadings | Biplot | Correlation
-7. Use **Constituent Drill-down** to select ETFs and run PCA on their top-10 holdings
+1. Select a **Region** from the dropdown (US / Europe / Global) — defaults to US
+2. Use the **ⓘ** popover next to the region dropdown to look up ticker names
+3. Tick **Use region preset** (default on) or enter custom tickers
+4. Set date range, return type (log/simple), number of components
+5. Configure PCA options: standardise, matrix type (correlation/covariance), Ledoit-Wolf shrinkage
+6. Click **Run PCA** — results persist in session state
+7. Inspect the side-by-side **Absolute** and **Relative** PCA panels, each with tabs: Scree | Loadings | Biplot | Correlation
+8. Use **Constituent Drill-down** to select ETFs and run PCA on their top-10 holdings
 
 ---
 
@@ -88,7 +89,7 @@ The app runs two parallel PCAs side by side:
 | **Absolute** | Raw sector ETF returns | PC1 = broad market factor; subsequent PCs = residual variation |
 | **Relative** | Sector return − SPY return (daily) | Market factor removed; PCs reveal rotation: cyclical vs defensive, momentum, etc. |
 
-**Benchmark:** SPY (S&P 500 ETF) — consistent with using ETFs throughout.
+**Benchmark:** region-dependent — SPY (US), EXSA.DE (Europe), ACWI (Global).
 
 ### Region Presets
 The app supports three region presets selected via a dropdown (defaults to US):
@@ -125,7 +126,7 @@ After running the sector PCA, the user can select one or more ETFs to drill into
 
 **Separate mode** (default): one PCA per ETF, each benchmarked against that ETF's own return. Loadings table shows symbol, name, weight in ETF, PC1, PC2 — sorted by |PC1|.
 
-**Merged mode** (checkbox): all holdings from all selected ETFs are pooled into a single PCA relative to SPY. A Sector column identifies the source ETF for each stock, allowing cross-sector factor structure to be observed.
+**Merged mode** (checkbox): all holdings from all selected ETFs are pooled into a single PCA relative to the region benchmark. A Sector column identifies the source ETF for each stock, allowing cross-sector factor structure to be observed.
 
 Both modes display:
 - Holdings coverage caption (e.g. "Top 10 holdings represent 61.3% of XLK")
@@ -140,13 +141,17 @@ Both modes display:
 ## Design Decisions & Notes
 - **Adjusted close** prices used throughout to account for splits and dividends.
 - **Log returns** default — additive, approximately normal, better suited for PCA.
-- **Relative returns** = sector daily return − SPY daily return (not excess over risk-free rate). Pure cross-sectional view, not an alpha measure.
+- **Relative returns** = sector daily return − benchmark daily return (not excess over risk-free rate). Pure cross-sectional view, not an alpha measure. Benchmark is region-dependent.
 - **Standardise** (default on): scales each return series to unit variance before PCA. When on, covariance of scaled data = correlation matrix, making the matrix-type toggle moot.
 - **PCA matrix type** (Correlation / Covariance): only has a distinct effect when standardise is off. The effective matrix used is shown as a UI metric.
 - **Ledoit-Wolf shrinkage** (default on): shrinks the sample matrix towards a scaled identity before eigendecomposition. Shrinkage coefficient α shown in UI. With 11 sectors and ~1000 obs, α ≈ 0.01 — becomes more material with shorter windows or larger baskets.
 - **PCA implementation**: uses explicit eigendecomposition (`np.linalg.eigh`) rather than sklearn SVD, so the covariance/correlation matrix is always computed and shrinkage can be applied before decomposition.
 - **Session state**: all sector PCA results stored in `st.session_state["pca"]`; constituent results in `st.session_state["drill_results"]`. This allows the constituent button to fire independently without re-running the sector PCA.
 - **Correlation tab**: each PCA panel (absolute/relative) has a Correlation tab showing the pairwise return correlation heatmap for that input — useful for interpreting loadings (e.g. XLC/XLK correlation collapses from 0.78 absolute to 0.10 relative).
+- **`fill_limit=3`** in `compute_returns` for constituent PCA: forward-fills prices up to 3 days before computing returns, bridging different exchange holiday calendars (e.g. UK/EU/Nordic stocks in European ETF holdings).
+- **Constituent diagnostics**: when tickers are dropped (no price data or >5% missing), the app names them explicitly so the user can distinguish transient rate-limiting from structural unavailability.
+- **Holdings retry**: `fetch_etf_holdings` retries up to 4 times with exponential backoff (3s, 6s, 9s, 12s) — necessary for European .DE ETFs which are rate-limited more aggressively on cloud IPs.
+- **Sector ticker re-filtering**: after `compute_returns`, sector tickers are re-checked against surviving columns; benchmark absence triggers an explicit error and `st.stop()`.
 
 ---
 
@@ -168,5 +173,9 @@ Both modes display:
 | 2026-04-26 | Region selector added: US (S&P 500), Europe (STOXX 600), Global (MSCI ACWI) — all tickers verified for data quality |
 | 2026-04-26 | Global preset replaced: SPDR MSCI World (.DE, EUR, 7 sectors) → iShares MSCI ACWI (USD, 10 sectors, ACWI benchmark) |
 | 2026-04-26 | Europe preset fixed and expanded: corrected all ticker→name mappings (were completely scrambled); added EXH1/2/4/9.DE (Oil & Gas, Financial Services, Industrial Goods, Utilities); now 14 sectors |
-| 2026-04-26 | Retry logic added to `fetch_adjusted_close` and `fetch_etf_holdings` — handles transient Yahoo Finance rate-limiting on cloud IPs (up to 2 retries, 2s delay) |
+| 2026-04-26 | Retry logic added to `fetch_adjusted_close` and `fetch_etf_holdings` — handles transient Yahoo Finance rate-limiting on cloud IPs |
 | 2026-04-26 | `app.py` re-filters sector tickers against columns surviving `compute_returns`; explicit guard if benchmark is dropped |
+| 2026-04-26 | `compute_returns` gains `fill_limit` param; constituent PCA uses `fill_limit=3` to handle mixed exchange calendars |
+| 2026-04-26 | Constituent diagnostics: names tickers with no price data or dropped by >5% missing threshold |
+| 2026-04-26 | History warnings added for Global preset: ACWI benchmark (2008-03-28); benchmark vs sector warning distinction |
+| 2026-04-26 | `fetch_etf_holdings` retry increased to 4 attempts with exponential backoff for European ETF rate-limiting |
