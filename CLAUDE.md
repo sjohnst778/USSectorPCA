@@ -96,7 +96,7 @@ The app supports three region presets selected via a dropdown (defaults to US):
 | Region | ETFs | Benchmark | Currency | Sectors |
 |---|---|---|---|---|
 | US — S&P 500 | XLB/XLC/XLE/XLF/XLI/XLK/XLP/XLRE/XLU/XLV/XLY | SPY | USD | 11 |
-| Europe — STOXX 600 | EXV1/3/4/5/6/7/8/EXH3/EXV9 (.DE) | EXSA.DE | EUR | 9 |
+| Europe — STOXX 600 | EXV1-9/EXH1/2/3/4/9 (.DE) | EXSA.DE | EUR | 14 |
 | Global — MSCI ACWI | IXP/RXI/KXI/IXC/IXG/IXJ/EXI/MXI/IXN/JXI | ACWI | USD | 10 |
 
 Non-USD regions display a currency notice. All tickers verified to have >1 year of clean data via yfinance as of 2026-04-26.
@@ -167,6 +167,6 @@ Both modes display:
 | 2026-04-25 | GitHub repo created (USSectorPCA); `runtime.txt` and `.gitignore` added for Streamlit Cloud deployment |
 | 2026-04-26 | Region selector added: US (S&P 500), Europe (STOXX 600), Global (MSCI ACWI) — all tickers verified for data quality |
 | 2026-04-26 | Global preset replaced: SPDR MSCI World (.DE, EUR, 7 sectors) → iShares MSCI ACWI (USD, 10 sectors, ACWI benchmark) |
-| 2026-04-26 | EXV2.DE (Technology) added to Europe STOXX 600 preset |
+| 2026-04-26 | Europe preset fixed and expanded: corrected all ticker→name mappings (were completely scrambled); added EXH1/2/4/9.DE (Oil & Gas, Financial Services, Industrial Goods, Utilities); now 14 sectors |
 | 2026-04-26 | Retry logic added to `fetch_adjusted_close` and `fetch_etf_holdings` — handles transient Yahoo Finance rate-limiting on cloud IPs (up to 2 retries, 2s delay) |
 | 2026-04-26 | `app.py` re-filters sector tickers against columns surviving `compute_returns`; explicit guard if benchmark is dropped |
