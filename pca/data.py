@@ -10,4 +10,12 @@ def fetch_adjusted_close(tickers: list[str], start: str, end: str) -> pd.DataFra
     else:
         prices = raw[["Close"]]
         prices.columns = tickers
-    return prices.dropna(how="all")
+
+    prices = prices.dropna(how="all")
+
+    # Drop tickers that returned entirely empty data (e.g. rate-limited by Yahoo)
+    all_null = prices.columns[prices.isnull().all()]
+    if len(all_null):
+        prices = prices.drop(columns=all_null)
+
+    return prices
