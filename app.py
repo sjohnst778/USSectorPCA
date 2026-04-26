@@ -606,6 +606,7 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
                         "etf_labels": ", ".join(drill_etfs),
                         "weight_coverage": weight_coverage,
                         "period_stats": compute_period_stats(c_rel_rets, method=return_type, benchmark=c_all_rets[bm_col]),
+                        "rel_rets": c_rel_rets,
                     }
                 }
     else:
@@ -660,6 +661,7 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
                 "weight_coverage": {etf: holdings["weight"].sum()},
                 "period_stats": compute_period_stats(c_rel_rets, method=return_type, benchmark=c_all_rets[bm_ticker]),
                 "bm_label": _benchmark_name if use_market_bm else etf,
+                "rel_rets": c_rel_rets,
             }
 
         st.session_state["drill_results"] = drill_results
@@ -694,3 +696,35 @@ if "drill_results" in st.session_state:
         _render_loadings_table(data["loadings_df"], data["result"], data["n_c_comp"], extra_cols=["sector"] if data.get("merged") else None)
 
         st.plotly_chart(plots.pc_scores_chart(data["result"]), use_container_width=True)
+
+        # Rolling PCA for constituents
+        _c_rets = data.get("rel_rets")
+        if _c_rets is not None and len(_c_rets) >= roll_window:
+            _c_name_map = data["loadings_df"].set_index("symbol")["name"].to_dict()
+            _c_ev, _c_ld = run_rolling_pca(
+                _c_rets,
+                window=roll_window,
+                n_components=min(2, data["n_c_comp"]),
+                use_shrinkage=pca_kwargs["use_shrinkage"],
+                standardize=pca_kwargs["standardize"],
+                matrix_type=pca_kwargs["matrix_type"],
+            )
+            _cc1, _cc2 = st.columns(2)
+            with _cc1:
+                st.plotly_chart(
+                    plots.rolling_variance_chart(_c_ev, "Rolling Explained Variance"),
+                    use_container_width=True,
+                )
+            with _cc2:
+                st.plotly_chart(
+                    plots.rolling_loadings_heatmap(
+                        _c_ld["PC1"].rename(columns=_c_name_map),
+                        "Rolling PC1 Loadings",
+                    ),
+                    use_container_width=True,
+                )
+            st.caption(
+                "⚠️ Rolling PCA uses the current top-10 holdings throughout. "
+                "Constituent composition changes over time are not reflected — "
+                "interpret with caution over longer periods."
+            )
