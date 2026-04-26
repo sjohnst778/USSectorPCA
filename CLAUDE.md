@@ -166,3 +166,5 @@ Both modes display:
 | 2026-04-25 | Weight coverage caption added to constituent results |
 | 2026-04-25 | GitHub repo created (USSectorPCA); `runtime.txt` and `.gitignore` added for Streamlit Cloud deployment |
 | 2026-04-26 | Region selector added: US (S&P 500), Europe (STOXX 600), Global (MSCI World) — all tickers verified for data quality |
+| 2026-04-26 | Retry logic added to `fetch_adjusted_close` and `fetch_etf_holdings` — handles transient Yahoo Finance rate-limiting on cloud IPs (up to 2 retries, 2s delay) |
+| 2026-04-26 | `app.py` re-filters sector tickers against columns surviving `compute_returns`; explicit guard if benchmark is dropped |
