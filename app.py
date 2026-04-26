@@ -55,7 +55,10 @@ REGIONS = {
             "ZPDM.DE": "Materials",    "ZPDT.DE": "Technology",
             "ZPDU.DE": "Utilities",
         },
-        "history_warnings": {},
+        "history_warnings": {
+            "SPPW.DE": (date(2019, 2, 26), "MSCI World benchmark"),
+            "ZPDK.DE": (date(2018, 8, 16), "Industrials"),
+        },
     },
 }
 
@@ -218,10 +221,16 @@ if run:
     if use_preset:
         for ticker, (cutoff, label) in region["history_warnings"].items():
             if start_date < cutoff:
-                st.warning(
-                    f"{ticker} ({label}) only has data from {cutoff}. "
-                    "It will be included from that date; earlier rows will be dropped."
-                )
+                if ticker == BENCHMARK:
+                    st.error(
+                        f"Benchmark {ticker} ({label}) only has data from {cutoff}. "
+                        "Please set your start date to on or after this date."
+                    )
+                else:
+                    st.warning(
+                        f"{ticker} ({label}) only has data from {cutoff}. "
+                        "It will be included from that date; earlier rows will be dropped."
+                    )
 
     fetch_tickers = list(dict.fromkeys(tickers + [BENCHMARK]))
 
