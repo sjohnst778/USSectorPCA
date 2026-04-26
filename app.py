@@ -243,7 +243,14 @@ if run:
         st.stop()
 
     all_returns = compute_returns(prices[sector_tickers + [BENCHMARK]], method=return_type)
+    if BENCHMARK not in all_returns.columns:
+        st.error(f"Benchmark {BENCHMARK} has insufficient data for the selected period.")
+        st.stop()
     benchmark_series = all_returns[BENCHMARK]
+    dropped = [t for t in sector_tickers if t not in all_returns.columns]
+    if dropped:
+        st.warning(f"Dropped due to insufficient data after return computation: {', '.join(dropped)}")
+    sector_tickers = [t for t in sector_tickers if t in all_returns.columns]
     sector_returns = all_returns[sector_tickers]
     relative_returns = compute_relative_returns(sector_returns, benchmark_series)
 
