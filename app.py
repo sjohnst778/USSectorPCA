@@ -456,19 +456,25 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
 
         bm_ticker = BENCHMARK
         available = [t for t in all_syms if t in c_prices.columns]
-        bm_in_prices = any(t in c_prices.columns for t in [bm_ticker, BENCHMARK])
+        no_price = [t for t in all_syms if t not in c_prices.columns]
+        bm_in_prices = bm_ticker in c_prices.columns
 
         if not bm_in_prices:
             st.warning("Could not fetch benchmark for benchmarking.")
             st.session_state.pop("drill_results", None)
         elif len(available) < 3:
-            st.warning("Fewer than 3 stocks have data across the selected ETFs.")
+            st.warning(f"Fewer than 3 stocks have price data. No data: {', '.join(no_price) if no_price else 'none fetched'}.")
             st.session_state.pop("drill_results", None)
         else:
-            bm_col = bm_ticker if bm_ticker in c_prices.columns else BENCHMARK
-            c_all_rets = compute_returns(c_prices[available + [bm_col]], method=return_type)
+            if no_price:
+                st.info(f"No price data fetched for: {', '.join(no_price)} — excluded.")
+            bm_col = bm_ticker
+            c_all_rets = compute_returns(c_prices[available + [bm_col]], method=return_type, fill_limit=3)
             # Re-filter: compute_returns may drop tickers with too many missing values
+            dropped_clean = [t for t in available if t not in c_all_rets.columns]
             available = [t for t in available if t in c_all_rets.columns]
+            if dropped_clean:
+                st.info(f"Dropped after return cleaning (>5% missing): {', '.join(dropped_clean)}.")
             if len(available) < 3:
                 st.warning("Fewer than 3 stocks have sufficient data after cleaning.")
                 st.session_state.pop("drill_results", None)
@@ -510,19 +516,27 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
                 c_prices = fetch_adjusted_close(fetch_list, str(start_date), str(end_date))
 
             available_constituents = [t for t in constituent_tickers if t in c_prices.columns]
+            no_price = [t for t in constituent_tickers if t not in c_prices.columns]
             if bm_ticker not in c_prices.columns:
                 drill_results[etf] = {"error": f"Could not retrieve benchmark ({bm_ticker}) for {etf}."}
                 continue
             if len(available_constituents) < 3:
-                drill_results[etf] = {"error": f"Fewer than 3 constituents have data for {etf}."}
+                detail = f" (no price data: {', '.join(no_price)})" if no_price else ""
+                drill_results[etf] = {"error": f"Fewer than 3 constituents have data for {etf}{detail}."}
                 continue
 
             price_cols = list(dict.fromkeys(available_constituents + [bm_ticker]))
-            c_all_rets = compute_returns(c_prices[price_cols], method=return_type)
+            c_all_rets = compute_returns(c_prices[price_cols], method=return_type, fill_limit=3)
             # Re-filter after compute_returns — it may drop tickers with too many missing values
+            dropped_clean = [t for t in available_constituents if t not in c_all_rets.columns]
             available_constituents = [t for t in available_constituents if t in c_all_rets.columns]
             if len(available_constituents) < 3:
-                drill_results[etf] = {"error": f"Fewer than 3 constituents have sufficient data for {etf} after cleaning."}
+                detail = ""
+                if no_price:
+                    detail += f" No price data: {', '.join(no_price)}."
+                if dropped_clean:
+                    detail += f" Dropped (>5% missing): {', '.join(dropped_clean)}."
+                drill_results[etf] = {"error": f"Fewer than 3 constituents have sufficient data for {etf} after cleaning.{detail}"}
                 continue
 
             c_rel_rets = compute_relative_returns(c_all_rets[available_constituents], c_all_rets[bm_ticker])

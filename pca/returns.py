@@ -2,12 +2,20 @@ import numpy as np
 import pandas as pd
 
 
-def compute_returns(prices: pd.DataFrame, method: str = "log") -> pd.DataFrame:
+def compute_returns(
+    prices: pd.DataFrame, method: str = "log", fill_limit: int | None = None
+) -> pd.DataFrame:
     """Compute return series from adjusted close prices.
 
     method: 'log' for log returns, 'simple' for arithmetic returns.
+    fill_limit: forward-fill prices up to this many days before computing returns.
+                Useful for mixed-calendar baskets (e.g. global constituents) where
+                different exchanges observe different holidays. None = no filling.
     Drops any ticker with more than 5% missing observations after the intersection.
     """
+    if fill_limit is not None:
+        prices = prices.ffill(limit=fill_limit)
+
     if method == "log":
         rets = np.log(prices / prices.shift(1))
     else:
