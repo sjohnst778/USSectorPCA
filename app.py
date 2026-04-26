@@ -4,56 +4,88 @@ from datetime import date, timedelta
 import pandas as pd
 
 from pca.data import fetch_adjusted_close
-from pca.returns import compute_returns, compute_relative_returns
+from pca.returns import compute_returns, compute_relative_returns, compute_period_stats
 from pca.analysis import run_pca, PCAResult
 from pca.holdings import fetch_etf_holdings
 from pca import plots
 
 st.set_page_config(page_title="PCA Equity Analysis", layout="wide")
-st.title("Equity Return PCA — S&P 500 Sectors")
 
-SECTOR_ETFS = ["XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"]
-BENCHMARK = "SPY"
-
-SECTOR_NAMES = {
-    "XLB": "Materials",
-    "XLC": "Communication Services",
-    "XLE": "Energy",
-    "XLF": "Financials",
-    "XLI": "Industrials",
-    "XLK": "Information Technology",
-    "XLP": "Consumer Staples",
-    "XLRE": "Real Estate",
-    "XLU": "Utilities",
-    "XLV": "Health Care",
-    "XLY": "Consumer Discretionary",
+# --- Region definitions ---
+REGIONS = {
+    "US — S&P 500 Sectors": {
+        "etfs": ["XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"],
+        "benchmark": "SPY",
+        "benchmark_name": "S&P 500",
+        "currency": "USD",
+        "names": {
+            "XLB": "Materials", "XLC": "Communication Services", "XLE": "Energy",
+            "XLF": "Financials", "XLI": "Industrials", "XLK": "Information Technology",
+            "XLP": "Consumer Staples", "XLRE": "Real Estate", "XLU": "Utilities",
+            "XLV": "Health Care", "XLY": "Consumer Discretionary",
+        },
+        "history_warnings": {
+            "XLC": (date(2018, 6, 19), "Communication Services"),
+            "XLRE": (date(2015, 10, 7), "Real Estate"),
+        },
+    },
+    "Europe — STOXX 600 Sectors": {
+        "etfs": ["EXV1.DE", "EXV3.DE", "EXV4.DE", "EXV5.DE", "EXV6.DE",
+                 "EXV7.DE", "EXV8.DE", "EXH3.DE", "EXV9.DE"],
+        "benchmark": "EXSA.DE",
+        "benchmark_name": "STOXX Europe 600",
+        "currency": "EUR",
+        "names": {
+            "EXV1.DE": "Automobiles & Parts", "EXV3.DE": "Banks",
+            "EXV4.DE": "Basic Resources",     "EXV5.DE": "Chemicals",
+            "EXV6.DE": "Construction",         "EXV7.DE": "Financial Services",
+            "EXV8.DE": "Food & Beverage",      "EXH3.DE": "Healthcare",
+            "EXV9.DE": "Industrial Goods",
+        },
+        "history_warnings": {},
+    },
+    "Global — MSCI World Sectors": {
+        "etfs": ["ZPDE.DE", "ZPDF.DE", "ZPDH.DE", "ZPDK.DE", "ZPDM.DE", "ZPDT.DE", "ZPDU.DE"],
+        "benchmark": "SPPW.DE",
+        "benchmark_name": "MSCI World",
+        "currency": "EUR",
+        "names": {
+            "ZPDE.DE": "Energy",       "ZPDF.DE": "Financials",
+            "ZPDH.DE": "Health Care",  "ZPDK.DE": "Industrials",
+            "ZPDM.DE": "Materials",    "ZPDT.DE": "Technology",
+            "ZPDU.DE": "Utilities",
+        },
+        "history_warnings": {},
+    },
 }
-
-# XLC from 2018, XLRE from 2015 — flag if date range extends before these
-XLC_START = date(2018, 6, 19)
-XLRE_START = date(2015, 10, 7)
 
 # --- Sidebar controls ---
 with st.sidebar:
     st.header("Configuration")
 
-    preset_col, info_col = st.columns([5, 1])
-    use_preset = preset_col.checkbox("Use S&P 500 sector preset", value=True)
+    region_col, info_col = st.columns([5, 1])
+    region_key = region_col.selectbox("Region", list(REGIONS.keys()), index=0)
+    region = REGIONS[region_key]
+    SECTOR_NAMES = region["names"]
+    BENCHMARK    = region["benchmark"]
+
     with info_col.popover("ⓘ"):
-        st.markdown("**Sector ETF reference**")
+        st.markdown(f"**{region_key}**")
         for ticker, name in SECTOR_NAMES.items():
             st.markdown(f"**{ticker}** — {name}")
-        st.markdown(f"**{BENCHMARK}** — S&P 500 (benchmark)")
+        st.markdown(f"**{BENCHMARK}** — {region['benchmark_name']} (benchmark)")
+        if region["currency"] != "USD":
+            st.caption(f"All returns in {region['currency']}.")
 
+    use_preset = st.checkbox("Use region preset", value=True)
     if use_preset:
-        ticker_input = ", ".join(SECTOR_ETFS)
-        st.caption(f"Benchmark: {BENCHMARK} (SPY)")
-        st.text_area("Tickers (read-only)", value=ticker_input, disabled=True, height=80)
-        tickers = SECTOR_ETFS[:]
+        st.text_area("Tickers (read-only)", value=", ".join(region["etfs"]), disabled=True, height=80)
+        st.caption(f"Benchmark: {BENCHMARK} ({region['benchmark_name']}) · {region['currency']}")
+        tickers = region["etfs"][:]
     else:
         ticker_input = st.text_area(
             "Tickers (comma-separated)",
-            value=", ".join(SECTOR_ETFS),
+            value=", ".join(region["etfs"]),
             height=80,
         )
         tickers = [t.strip().upper() for t in ticker_input.split(",") if t.strip()]
@@ -100,6 +132,45 @@ with st.sidebar:
     run = st.button("Run PCA", type="primary", use_container_width=True)
 
 # --- Helpers ---
+def _style_stats(df: "pd.DataFrame") -> "pd.io.formats.style.Styler":
+    """Format and heatmap a period statistics DataFrame.
+
+    Expects columns: ticker, name, beta, total_return, ann_return, ann_volatility, risk_adjusted.
+    Ann. Return and Risk-Adjusted are heatmapped with a diverging blue/red scale centred at zero.
+    """
+    display = df.rename(columns={
+        "beta":           "Beta",
+        "total_return":   "Total Return",
+        "ann_return":     "Ann. Return",
+        "ann_volatility": "Ann. Volatility",
+        "risk_adjusted":  "Risk-Adjusted",
+    })
+
+    def _diverging(styler, col):
+        if col not in display.columns:
+            return styler
+        abs_max = display[col].abs().max()
+        if abs_max == 0 or pd.isna(abs_max):
+            return styler
+        return styler.background_gradient(
+            subset=[col], cmap="RdBu", vmin=-abs_max, vmax=abs_max
+        )
+
+    fmt = {
+        "Total Return":    "{:+.2%}",
+        "Ann. Return":     "{:+.2%}",
+        "Ann. Volatility": "{:.2%}",
+        "Risk-Adjusted":   "{:+.2f}",
+    }
+    if "Beta" in display.columns:
+        fmt["Beta"] = "{:.2f}"
+
+    styler = display.style.format(fmt)
+    styler = _diverging(styler, "Ann. Return")
+    styler = _diverging(styler, "Risk-Adjusted")
+    return styler
+
+
 def _pca_tabs(label: str, result: PCAResult, n_comp: int, returns: "pd.DataFrame") -> None:
     tab1, tab2, tab3, tab4 = st.tabs(["Scree", "Loadings", "Biplot", "Correlation"])
     with tab1:
@@ -137,16 +208,12 @@ if run:
         st.stop()
 
     if use_preset:
-        if start_date < XLC_START:
-            st.warning(
-                f"XLC (Communication Services) only has data from {XLC_START}. "
-                "It will be included from that date; earlier rows will be dropped."
-            )
-        if start_date < XLRE_START:
-            st.warning(
-                f"XLRE (Real Estate) only has data from {XLRE_START}. "
-                "It will be included from that date; earlier rows will be dropped."
-            )
+        for ticker, (cutoff, label) in region["history_warnings"].items():
+            if start_date < cutoff:
+                st.warning(
+                    f"{ticker} ({label}) only has data from {cutoff}. "
+                    "It will be included from that date; earlier rows will be dropped."
+                )
 
     fetch_tickers = list(dict.fromkeys(tickers + [BENCHMARK]))
 
@@ -186,6 +253,7 @@ if run:
     st.session_state["pca"] = dict(
         sector_returns=sector_returns,
         relative_returns=relative_returns,
+        benchmark_series=benchmark_series,
         result_abs=result_abs,
         result_rel=result_rel,
         sector_tickers=sector_tickers,
@@ -194,6 +262,10 @@ if run:
         start_date=start_date,
         end_date=end_date,
         return_type=return_type,
+        region_key=region_key,
+        sector_names=SECTOR_NAMES,
+        benchmark_name=region["benchmark_name"],
+        currency=region["currency"],
     )
     st.session_state.pop("drill_results", None)   # clear stale drill-down on fresh run
 
@@ -205,6 +277,7 @@ if "pca" not in st.session_state:
 _s = st.session_state["pca"]
 sector_returns   = _s["sector_returns"]
 relative_returns = _s["relative_returns"]
+benchmark_series = _s["benchmark_series"]
 result_abs       = _s["result_abs"]
 result_rel       = _s["result_rel"]
 sector_tickers   = _s["sector_tickers"]
@@ -213,6 +286,14 @@ pca_kwargs       = _s["pca_kwargs"]
 start_date       = _s["start_date"]
 end_date         = _s["end_date"]
 return_type      = _s["return_type"]
+_region_key      = _s["region_key"]
+SECTOR_NAMES     = _s["sector_names"]
+BENCHMARK        = _s.get("benchmark_name", "benchmark")
+_currency        = _s.get("currency", "USD")
+
+st.title(f"Equity Return PCA — {_region_key}")
+if _currency != "USD":
+    st.caption(f"All returns denominated in {_currency}.")
 
 # --- Summary ---
 st.subheader("Data Summary")
@@ -220,6 +301,13 @@ m1, m2, m3 = st.columns(3)
 m1.metric("Sectors used", len(sector_tickers))
 m2.metric("Trading days", sector_returns.shape[0])
 m3.metric("Date range", f"{sector_returns.index[0].date()} → {sector_returns.index[-1].date()}")
+
+with st.expander("Period Statistics"):
+    stats = compute_period_stats(sector_returns, method=return_type, benchmark=benchmark_series)
+    stats_df = stats.reset_index()
+    stats_df.columns = ["ticker", "beta", "total_return", "ann_return", "ann_volatility", "risk_adjusted"]
+    stats_df.insert(1, "name", stats_df["ticker"].map(SECTOR_NAMES).fillna(""))
+    st.dataframe(_style_stats(stats_df), use_container_width=True, hide_index=True)
 
 st.divider()
 
@@ -338,41 +426,49 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
         with st.spinner(f"Fetching price data for {len(all_syms)} stocks…"):
             c_prices = fetch_adjusted_close(fetch_list, str(start_date), str(end_date))
 
+        bm_ticker = _s["pca"]["benchmark_series"].name if "pca" in st.session_state else BENCHMARK
         available = [t for t in all_syms if t in c_prices.columns]
-        if BENCHMARK not in c_prices.columns:
-            st.warning("Could not fetch SPY for benchmarking.")
+        bm_in_prices = any(t in c_prices.columns for t in [bm_ticker, BENCHMARK])
+
+        if not bm_in_prices:
+            st.warning("Could not fetch benchmark for benchmarking.")
             st.session_state.pop("drill_results", None)
         elif len(available) < 3:
             st.warning("Fewer than 3 stocks have data across the selected ETFs.")
             st.session_state.pop("drill_results", None)
         else:
-            c_all_rets = compute_returns(c_prices[available + [BENCHMARK]], method=return_type)
-            c_rel_rets = compute_relative_returns(c_all_rets[available], c_all_rets[BENCHMARK])
-
-            n_c_comp = min(2, len(available))
-            c_result = run_pca(c_rel_rets, **{**pca_kwargs, "n_components": n_c_comp})
-
-            loadings_df = _build_loadings_table(
-                c_result,
-                combined[["symbol", "name", "sector", "weight"]],
-                n_c_comp,
-            )
-            # Per-ETF weight coverage for merged display
-            weight_coverage = (
-                combined.groupby("sector")["weight"].sum()
-                .rename(index=lambda s: next((e for e, n in SECTOR_NAMES.items() if n == s), s))
-                .to_dict()
-            )
-            st.session_state["drill_results"] = {
-                "_merged": {
-                    "result": c_result,
-                    "loadings_df": loadings_df,
-                    "n_c_comp": n_c_comp,
-                    "merged": True,
-                    "etf_labels": ", ".join(drill_etfs),
-                    "weight_coverage": weight_coverage,
+            bm_col = bm_ticker if bm_ticker in c_prices.columns else BENCHMARK
+            c_all_rets = compute_returns(c_prices[available + [bm_col]], method=return_type)
+            # Re-filter: compute_returns may drop tickers with too many missing values
+            available = [t for t in available if t in c_all_rets.columns]
+            if len(available) < 3:
+                st.warning("Fewer than 3 stocks have sufficient data after cleaning.")
+                st.session_state.pop("drill_results", None)
+            else:
+                c_rel_rets = compute_relative_returns(c_all_rets[available], c_all_rets[bm_col])
+                n_c_comp = min(2, len(available))
+                c_result = run_pca(c_rel_rets, **{**pca_kwargs, "n_components": n_c_comp})
+                loadings_df = _build_loadings_table(
+                    c_result,
+                    combined[["symbol", "name", "sector", "weight"]],
+                    n_c_comp,
+                )
+                weight_coverage = (
+                    combined.groupby("sector")["weight"].sum()
+                    .rename(index=lambda s: next((e for e, n in SECTOR_NAMES.items() if n == s), s))
+                    .to_dict()
+                )
+                st.session_state["drill_results"] = {
+                    "_merged": {
+                        "result": c_result,
+                        "loadings_df": loadings_df,
+                        "n_c_comp": n_c_comp,
+                        "merged": True,
+                        "etf_labels": ", ".join(drill_etfs),
+                        "weight_coverage": weight_coverage,
+                        "period_stats": compute_period_stats(c_rel_rets, method=return_type, benchmark=c_all_rets[bm_col]),
+                    }
                 }
-            }
     else:
         drill_results = {}
         for etf, holdings in all_holdings.items():
@@ -393,6 +489,12 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
             c_all_rets = compute_returns(
                 c_prices[available_constituents + [etf]], method=return_type
             )
+            # Re-filter after compute_returns — it may drop tickers with too many missing values
+            available_constituents = [t for t in available_constituents if t in c_all_rets.columns]
+            if len(available_constituents) < 3:
+                drill_results[etf] = {"error": f"Fewer than 3 constituents have sufficient data for {etf} after cleaning."}
+                continue
+
             c_rel_rets = compute_relative_returns(c_all_rets[available_constituents], c_all_rets[etf])
 
             n_c_comp = min(2, len(available_constituents))
@@ -407,6 +509,7 @@ if drill_etfs and st.button("Run Constituent PCA", type="secondary"):
                 "n_c_comp": n_c_comp,
                 "merged": False,
                 "weight_coverage": {etf: holdings["weight"].sum()},
+                "period_stats": compute_period_stats(c_rel_rets, method=return_type, benchmark=c_all_rets[etf]),
             }
 
         st.session_state["drill_results"] = drill_results
@@ -424,11 +527,19 @@ if "drill_results" in st.session_state:
             st.markdown(f"#### Merged: {data['etf_labels']} — constituents vs {BENCHMARK}")
             cov_parts = [f"{etf}: {w:.1f}%" for etf, w in coverage.items()]
             st.caption(f"Top 10 holdings coverage — {' | '.join(cov_parts)}")
-            _render_loadings_table(data["loadings_df"], data["result"], data["n_c_comp"], extra_cols=["sector"])
         else:
             st.markdown(f"#### {key} — {SECTOR_NAMES.get(key, key)}")
             total_w = coverage.get(key, 0.0)
             st.caption(f"Top 10 holdings represent **{total_w:.1f}%** of {key}")
-            _render_loadings_table(data["loadings_df"], data["result"], data["n_c_comp"])
+
+        with st.expander("Period Statistics"):
+            c_stats = data["period_stats"]
+            name_map = data["loadings_df"].set_index("symbol")["name"].to_dict()
+            c_stats_df = c_stats.reset_index()
+            c_stats_df.columns = ["ticker", "beta", "total_return", "ann_return", "ann_volatility", "risk_adjusted"]
+            c_stats_df.insert(1, "name", c_stats_df["ticker"].map(name_map).fillna(""))
+            st.dataframe(_style_stats(c_stats_df), use_container_width=True, hide_index=True)
+
+        _render_loadings_table(data["loadings_df"], data["result"], data["n_c_comp"], extra_cols=["sector"] if data.get("merged") else None)
 
         st.plotly_chart(plots.pc_scores_chart(data["result"]), use_container_width=True)

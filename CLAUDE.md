@@ -90,7 +90,18 @@ The app runs two parallel PCAs side by side:
 
 **Benchmark:** SPY (S&P 500 ETF) — consistent with using ETFs throughout.
 
-### S&P 500 Sector Preset
+### Region Presets
+The app supports three region presets selected via a dropdown (defaults to US):
+
+| Region | ETFs | Benchmark | Currency | Sectors |
+|---|---|---|---|---|
+| US — S&P 500 | XLB/XLC/XLE/XLF/XLI/XLK/XLP/XLRE/XLU/XLV/XLY | SPY | USD | 11 |
+| Europe — STOXX 600 | EXV1/3/4/5/6/7/8/EXH3/EXV9 (.DE) | EXSA.DE | EUR | 9 |
+| Global — MSCI World | ZPDE/F/H/K/M/T/U (.DE) | SPPW.DE | EUR | 7 |
+
+Non-USD regions display a currency notice. All tickers verified to have >1 year of clean data via yfinance as of 2026-04-26.
+
+### S&P 500 Sector Preset (US)
 | Ticker | Sector | History from |
 |---|---|---|
 | XLB | Materials | 1998 |
@@ -154,3 +165,4 @@ Both modes display:
 | 2026-04-25 | ETF ticker ⓘ popover; scree legend repositioned above chart; sector reference panel removed |
 | 2026-04-25 | Weight coverage caption added to constituent results |
 | 2026-04-25 | GitHub repo created (USSectorPCA); `runtime.txt` and `.gitignore` added for Streamlit Cloud deployment |
+| 2026-04-26 | Region selector added: US (S&P 500), Europe (STOXX 600), Global (MSCI World) — all tickers verified for data quality |
