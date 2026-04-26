@@ -30,9 +30,9 @@ PCA/
 |---|---|
 | `pca/data.py` | Fetch adjusted close prices via `yfinance` for a list of tickers |
 | `pca/returns.py` | Compute log or simple returns; `compute_relative_returns` subtracts benchmark daily return |
-| `pca/analysis.py` | Demean, optionally standardise, compute correlation/covariance matrix (with optional LW shrinkage), eigendecompose; returns `PCAResult` dataclass |
+| `pca/analysis.py` | Demean, optionally standardise, compute correlation/covariance matrix (with optional LW shrinkage), eigendecompose; returns `PCAResult` dataclass; `run_rolling_pca` for time-series factor analysis |
 | `pca/holdings.py` | Fetch ETF top-10 holdings (symbol, name, weight) from `yfinance.Ticker.funds_data` |
-| `pca/plots.py` | Scree plot, loadings heatmap, biplot, correlation heatmap, cumulative PC score projections |
+| `pca/plots.py` | Scree plot, loadings heatmap, biplot, correlation heatmap, cumulative PC score projections, rolling variance chart, rolling loadings heatmap |
 | `app.py` | Streamlit UI — all state persisted in `st.session_state` to support independent button interactions |
 
 ---
@@ -87,20 +87,35 @@ The app runs two parallel PCAs side by side:
 | Mode | Input | What it reveals |
 |---|---|---|
 | **Absolute** | Raw sector ETF returns | PC1 = broad market factor; subsequent PCs = residual variation |
-| **Relative** | Sector return − SPY return (daily) | Market factor removed; PCs reveal rotation: cyclical vs defensive, momentum, etc. |
+| **Relative** | Sector return − benchmark return (daily) | Market factor removed; PCs reveal rotation: cyclical vs defensive, momentum, etc. |
 
 **Benchmark:** region-dependent — SPY (US), EXSA.DE (Europe), ACWI (Global).
 
 ### Region Presets
-The app supports three region presets selected via a dropdown (defaults to US):
+The app supports four presets selected via a dropdown (defaults to US):
 
 | Region | ETFs | Benchmark | Currency | Sectors |
 |---|---|---|---|---|
 | US — S&P 500 | XLB/XLC/XLE/XLF/XLI/XLK/XLP/XLRE/XLU/XLV/XLY | SPY | USD | 11 |
 | Europe — STOXX 600 | EXV1-9/EXH1/2/3/4/9 (.DE) | EXSA.DE | EUR | 14 |
 | Global — MSCI ACWI | IXP/RXI/KXI/IXC/IXG/IXJ/EXI/MXI/IXN/JXI | ACWI | USD | 10 |
+| US — Style Factors | IWF/VTV/IWM/USMV/MTUM/QUAL/VLUE/SIZE | SPY | USD | 8 |
 
 Non-USD regions display a currency notice. All tickers verified to have >1 year of clean data via yfinance as of 2026-04-26.
+
+### Style Factors Preset
+| Ticker | Factor | History from |
+|---|---|---|
+| IWF | Growth | 2000 |
+| VTV | Value (Broad) | 2004 |
+| IWM | Small Cap | 2000 |
+| USMV | Min Volatility | **2011-10-20** |
+| MTUM | Momentum | **2013-04-18** |
+| QUAL | Quality | **2013-07-18** |
+| VLUE | Value (Factor) | **2013-04-18** |
+| SIZE | Size | **2013-04-18** |
+
+In relative space (vs SPY), PC1 typically captures the value/growth rotation; PC2 captures the risk-on/risk-off (small cap vs defensive) dynamic.
 
 ### S&P 500 Sector Preset (US)
 | Ticker | Sector | History from |
@@ -130,11 +145,14 @@ After running the sector PCA, the user can select one or more ETFs to drill into
 
 Both modes display:
 - Holdings coverage caption (e.g. "Top 10 holdings represent 61.3% of XLK")
-- Explained variance per PC
-- Loadings table with colour gradient
+- Period statistics table with benchmark row at top (bold) — total return, annualised return, volatility, beta, risk-adjusted return
+- Loadings table with colour gradient, explained variance per PC
 - Cumulative PC score projections chart
+- Rolling PCA: explained variance and PC1 loadings heatmap using the same window as the sector rolling PCA, with disclaimer noting static constituent assumption
 
 **Data source:** `yfinance.Ticker.funds_data.top_holdings` — returns up to 10 holdings. Coverage is typically 60–75% of ETF weight, sufficient for PCA signal.
+
+**Benchmark choice (separate mode):** user can benchmark each ETF's constituents against the sector ETF itself (reveals within-sector sub-factors) or against the region benchmark (shows which constituents lead/lag the market).
 
 ---
 
@@ -152,6 +170,9 @@ Both modes display:
 - **Constituent diagnostics**: when tickers are dropped (no price data or >5% missing), the app names them explicitly so the user can distinguish transient rate-limiting from structural unavailability.
 - **Holdings retry**: `fetch_etf_holdings` retries up to 4 times with exponential backoff (3s, 6s, 9s, 12s) — necessary for European .DE ETFs which are rate-limited more aggressively on cloud IPs.
 - **Sector ticker re-filtering**: after `compute_returns`, sector tickers are re-checked against surviving columns; benchmark absence triggers an explicit error and `st.stop()`.
+- **Rolling PCA** (`run_rolling_pca` in `analysis.py`): runs PCA on a rolling window (63/126/252 days) and returns time series of explained variance ratios and loadings per PC. Sign ambiguity resolved by aligning each window to the previous via dot product sign; first window uses sklearn convention (largest absolute loading is positive). Displayed after the dual PCA section and also per-ETF in constituent drill-down.
+- **Period statistics benchmark row**: `_with_benchmark_row()` prepends the benchmark's own stats (beta=1 by definition) as the first row, bolded, in both sector and constituent period statistics tables.
+- **Style factors preset**: relative PCA vs SPY on factor ETFs (Growth, Value, Momentum, Quality, Min Vol, Size, Small Cap) isolates factor rotation dynamics without the market return.
 
 ---
 
@@ -179,3 +200,7 @@ Both modes display:
 | 2026-04-26 | Constituent diagnostics: names tickers with no price data or dropped by >5% missing threshold |
 | 2026-04-26 | History warnings added for Global preset: ACWI benchmark (2008-03-28); benchmark vs sector warning distinction |
 | 2026-04-26 | `fetch_etf_holdings` retry increased to 4 attempts with exponential backoff for European ETF rate-limiting |
+| 2026-04-26 | Rolling PCA added: `run_rolling_pca()` in analysis.py; rolling variance and loadings heatmap charts in plots.py; Rolling PCA section in app.py (window 1Q/6M/1Y, PC1/PC2 toggle, abs vs rel side by side) |
+| 2026-04-26 | Rolling PCA added to constituent drill-down results with static-holdings disclaimer |
+| 2026-04-26 | US — Style Factors preset added: IWF/VTV/IWM/USMV/MTUM/QUAL/VLUE/SIZE vs SPY |
+| 2026-04-26 | Benchmark row added to period statistics tables (bold, beta=1, top row) for both sector and constituent views |
