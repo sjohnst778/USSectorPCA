@@ -22,7 +22,8 @@ PCA/
     ├── returns.py          # Log/simple return computation; relative returns vs benchmark
     ├── analysis.py         # PCA via explicit eigendecomposition (LW shrinkage optional)
     ├── holdings.py         # ETF constituent lookup via yfinance funds_data
-    └── plots.py            # Plotly charts: scree, loadings heatmap, biplot, correlation heatmap, PC score projections
+    ├── network.py          # MST construction and Louvain community detection
+    └── plots.py            # Plotly charts: scree, loadings heatmap, biplot, correlation heatmap, PC score projections, MST network graph
 ```
 
 ### Key Components
@@ -32,7 +33,8 @@ PCA/
 | `pca/returns.py` | Compute log or simple returns; `compute_relative_returns` subtracts benchmark daily return |
 | `pca/analysis.py` | Demean, optionally standardise, compute correlation/covariance matrix (with optional LW shrinkage), eigendecompose; returns `PCAResult` dataclass; `run_rolling_pca` for time-series factor analysis |
 | `pca/holdings.py` | Fetch ETF top-10 holdings (symbol, name, weight) from `yfinance.Ticker.funds_data` |
-| `pca/plots.py` | Scree plot, loadings heatmap, biplot, correlation heatmap, cumulative PC score projections, rolling variance chart, rolling loadings heatmap |
+| `pca/network.py` | `build_mst()` — Kruskal MST on Mantegna distance (1 − ρ); `detect_communities()` — Louvain on positive-correlation graph via `networkx` |
+| `pca/plots.py` | Scree plot, loadings heatmap, biplot, correlation heatmap, cumulative PC score projections, rolling variance chart, rolling loadings heatmap, MST network graph |
 | `app.py` | Streamlit UI — all state persisted in `st.session_state` to support independent button interactions |
 
 ---
@@ -47,6 +49,7 @@ PCA/
 | `plotly` | Interactive charts |
 | `streamlit` | Web dashboard |
 | `matplotlib` | Required by pandas `.background_gradient()` for styled tables |
+| `networkx` | MST construction and Louvain community detection |
 
 ---
 
@@ -76,7 +79,7 @@ Hosted on **Streamlit Community Cloud** via GitHub repo `USSectorPCA`.
 4. Set date range, return type (log/simple), number of components
 5. Configure PCA options: standardise, matrix type (correlation/covariance), Ledoit-Wolf shrinkage
 6. Click **Run PCA** — results persist in session state
-7. Inspect the side-by-side **Absolute** and **Relative** PCA panels, each with tabs: Scree | Loadings | Biplot | Correlation
+7. Inspect the side-by-side **Absolute** and **Relative** PCA panels, each with tabs: Scree | Loadings | Biplot | Correlation | Network
 8. Use **Constituent Drill-down** to select ETFs and run PCA on their top-10 holdings
 
 ---
@@ -147,6 +150,7 @@ Both modes display:
 - Holdings coverage caption (e.g. "Top 10 holdings represent 61.3% of XLK")
 - Period statistics table with benchmark row at top (bold) — total return, annualised return, volatility, beta, risk-adjusted return
 - Loadings table with colour gradient, explained variance per PC
+- MST network graph of constituent correlations with Louvain community colouring
 - Cumulative PC score projections chart
 - Rolling PCA: explained variance and PC1 loadings heatmap using the same window as the sector rolling PCA, with disclaimer noting static constituent assumption
 
@@ -170,9 +174,10 @@ Both modes display:
 - **Constituent diagnostics**: when tickers are dropped (no price data or >5% missing), the app names them explicitly so the user can distinguish transient rate-limiting from structural unavailability.
 - **Holdings retry**: `fetch_etf_holdings` retries up to 4 times with exponential backoff (3s, 6s, 9s, 12s) — necessary for European .DE ETFs which are rate-limited more aggressively on cloud IPs.
 - **Sector ticker re-filtering**: after `compute_returns`, sector tickers are re-checked against surviving columns; benchmark absence triggers an explicit error and `st.stop()`.
-- **Rolling PCA** (`run_rolling_pca` in `analysis.py`): runs PCA on a rolling window (63/126/252 days) and returns time series of explained variance ratios and loadings per PC. Sign ambiguity resolved by aligning each window to the previous via dot product sign; first window uses sklearn convention (largest absolute loading is positive). Displayed after the dual PCA section and also per-ETF in constituent drill-down.
+- **Rolling PCA** (`run_rolling_pca` in `analysis.py`): runs PCA on a rolling window (63/126/252 days) and returns time series of explained variance ratios and loadings per PC. Sign ambiguity resolved by aligning each window to the previous via dot product sign; first window uses sklearn convention (largest absolute loading is positive). Displayed after the dual PCA section and also per-ETF in constituent drill-down. If the selected window exceeds the available trading days, a descriptive info message is shown instead of crashing.
 - **Period statistics benchmark row**: `_with_benchmark_row()` prepends the benchmark's own stats (beta=1 by definition) as the first row, bolded, in both sector and constituent period statistics tables.
 - **Style factors preset**: relative PCA vs SPY on factor ETFs (Growth, Value, Momentum, Quality, Min Vol, Size, Small Cap) isolates factor rotation dynamics without the market return.
+- **MST network graph** (`pca/network.py`, `plots.mst_plot`): Minimum Spanning Tree of the pairwise return correlation matrix using Mantegna distance (1 − ρ). Node layout computed via Kamada-Kawai on the full distance matrix so geometrically close nodes are highly correlated. Nodes coloured by Louvain community (detected on the positive-correlation graph using `networkx.community.louvain_communities`). Edge thickness scales with |correlation|; edge hover shows exact correlation value. Appears as a **Network** tab in both Absolute and Relative PCA panels, and inline in constituent drill-down results (after the loadings table, before PC score projections). The relative-returns MST is particularly interpretable — with the market factor stripped, topology reflects true rotation dynamics rather than beta clustering.
 
 ---
 
@@ -204,3 +209,5 @@ Both modes display:
 | 2026-04-26 | Rolling PCA added to constituent drill-down results with static-holdings disclaimer |
 | 2026-04-26 | US — Style Factors preset added: IWF/VTV/IWM/USMV/MTUM/QUAL/VLUE/SIZE vs SPY |
 | 2026-04-26 | Benchmark row added to period statistics tables (bold, beta=1, top row) for both sector and constituent views |
+| 2026-04-27 | MST network graph added: `pca/network.py` (`build_mst`, `detect_communities`); `plots.mst_plot`; Network tab in sector PCA panels; inline in constituent drill-down after loadings table |
+| 2026-04-27 | Rolling PCA window guard: shows info message instead of `KeyError` when selected window exceeds available trading days |
