@@ -8,6 +8,7 @@ from pca.returns import compute_returns, compute_relative_returns, compute_perio
 from pca.analysis import run_pca, run_rolling_pca, PCAResult
 from pca.holdings import fetch_etf_holdings
 from pca import plots
+from pca.network import build_mst, detect_communities
 
 st.set_page_config(page_title="PCA Equity Analysis", layout="wide")
 
@@ -228,7 +229,7 @@ def _with_benchmark_row(
 
 
 def _pca_tabs(label: str, result: PCAResult, n_comp: int, returns: "pd.DataFrame") -> None:
-    tab1, tab2, tab3, tab4 = st.tabs(["Scree", "Loadings", "Biplot", "Correlation"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Scree", "Loadings", "Biplot", "Correlation", "Network"])
     with tab1:
         st.plotly_chart(plots.scree_plot(result), use_container_width=True)
     with tab2:
@@ -254,6 +255,22 @@ def _pca_tabs(label: str, result: PCAResult, n_comp: int, returns: "pd.DataFrame
             st.plotly_chart(plots.biplot(result, pc_x, pc_y), use_container_width=True)
     with tab4:
         st.plotly_chart(plots.correlation_heatmap(returns), use_container_width=True)
+    with tab5:
+        _mst, _corr = build_mst(returns)
+        _communities = detect_communities(_corr)
+        st.plotly_chart(
+            plots.mst_plot(_mst, _corr, _communities, SECTOR_NAMES),
+            use_container_width=True,
+        )
+        st.caption(
+            "**Minimum Spanning Tree** of the pairwise return correlation matrix "
+            "(Mantegna distance: 1 − ρ). "
+            "The MST retains only the *n* − 1 edges that span the graph at minimum total distance — "
+            "its topology is the backbone of the full correlation structure. "
+            "**Edge thickness** ∝ correlation strength. "
+            "**Node colour** = Louvain community (detected on the full positive-correlation graph). "
+            "Communities that cut across GICS classifications indicate sectors the market prices together."
+        )
 
     st.subheader("PC Score Projections")
     st.caption(
@@ -453,33 +470,41 @@ else:
     def _rename_cols(df):
         return df.rename(columns=SECTOR_NAMES) if not df.empty else df
 
-    _rc_abs, _rc_rel = st.columns(2)
-    with _rc_abs:
-        st.markdown("**Absolute Returns**")
-        st.plotly_chart(
-            plots.rolling_variance_chart(_ev_abs, "Rolling Explained Variance — Absolute"),
-            use_container_width=True,
+    if _ev_abs.empty:
+        st.info(
+            f"Not enough data for the selected {roll_window}-day rolling window "
+            f"({sector_returns.shape[0]} trading days available). "
+            "Select a shorter window or a wider date range."
         )
-        st.plotly_chart(
-            plots.rolling_loadings_heatmap(
-                _rename_cols(_ld_abs[roll_pc]),
-                f"Rolling {roll_pc} Loadings — Absolute",
-            ),
-            use_container_width=True,
-        )
-    with _rc_rel:
-        st.markdown(f"**Relative Returns (vs {_benchmark_name})**")
-        st.plotly_chart(
-            plots.rolling_variance_chart(_ev_rel, "Rolling Explained Variance — Relative"),
-            use_container_width=True,
-        )
-        st.plotly_chart(
-            plots.rolling_loadings_heatmap(
-                _rename_cols(_ld_rel[roll_pc]),
-                f"Rolling {roll_pc} Loadings — Relative",
-            ),
-            use_container_width=True,
-        )
+        roll_window = 63   # keep a valid value for the constituent rolling PCA guard below
+    else:
+        _rc_abs, _rc_rel = st.columns(2)
+        with _rc_abs:
+            st.markdown("**Absolute Returns**")
+            st.plotly_chart(
+                plots.rolling_variance_chart(_ev_abs, "Rolling Explained Variance — Absolute"),
+                use_container_width=True,
+            )
+            st.plotly_chart(
+                plots.rolling_loadings_heatmap(
+                    _rename_cols(_ld_abs[roll_pc]),
+                    f"Rolling {roll_pc} Loadings — Absolute",
+                ),
+                use_container_width=True,
+            )
+        with _rc_rel:
+            st.markdown(f"**Relative Returns (vs {_benchmark_name})**")
+            st.plotly_chart(
+                plots.rolling_variance_chart(_ev_rel, "Rolling Explained Variance — Relative"),
+                use_container_width=True,
+            )
+            st.plotly_chart(
+                plots.rolling_loadings_heatmap(
+                    _rename_cols(_ld_rel[roll_pc]),
+                    f"Rolling {roll_pc} Loadings — Relative",
+                ),
+                use_container_width=True,
+            )
 
 # --- Constituent drill-down ---
 st.divider()
@@ -726,6 +751,15 @@ if "drill_results" in st.session_state:
             st.dataframe(_style_stats(c_stats_df), use_container_width=True, hide_index=True)
 
         _render_loadings_table(data["loadings_df"], data["result"], data["n_c_comp"], extra_cols=["sector"] if data.get("merged") else None)
+
+        _c_rets_net = data.get("rel_rets")
+        if _c_rets_net is not None and _c_rets_net.shape[1] >= 3:
+            _c_mst, _c_corr = build_mst(_c_rets_net)
+            _c_communities = detect_communities(_c_corr)
+            st.plotly_chart(
+                plots.mst_plot(_c_mst, _c_corr, _c_communities, name_map),
+                use_container_width=True,
+            )
 
         st.plotly_chart(plots.pc_scores_chart(data["result"]), use_container_width=True)
 

@@ -163,6 +163,92 @@ def rolling_variance_chart(ev_df: "pd.DataFrame", title: str = "Rolling Explaine
     return fig
 
 
+def mst_plot(
+    mst: "nx.Graph",
+    corr: "pd.DataFrame",
+    communities: "dict[str, int]",
+    names: "dict[str, str]",
+    title: str = "Minimum Spanning Tree",
+) -> go.Figure:
+    """MST network graph with nodes coloured by Louvain community.
+
+    Layout is computed from the full pairwise distance matrix (not just MST edges)
+    using Kamada-Kawai, so geometrically close nodes are highly correlated even
+    if not directly connected in the tree.  Edge thickness scales with |correlation|.
+    """
+    import networkx as nx
+
+    tickers = list(corr.columns)
+    G_full = nx.Graph()
+    G_full.add_nodes_from(tickers)
+    for i in range(len(tickers)):
+        for j in range(i + 1, len(tickers)):
+            G_full.add_edge(tickers[i], tickers[j], weight=1.0 - float(corr.iloc[i, j]))
+    pos = nx.kamada_kawai_layout(G_full, weight="weight")
+
+    n_comm = max(communities.values(), default=0) + 1
+    palette = (
+        px.colors.qualitative.Plotly
+        + px.colors.qualitative.D3
+        + px.colors.qualitative.Dark24
+    )
+    comm_colors = {i: palette[i % len(palette)] for i in range(n_comm)}
+
+    fig = go.Figure()
+
+    for u, v, data in mst.edges(data=True):
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        c = data["corr"]
+        fig.add_scatter(
+            x=[x0, x1, None], y=[y0, y1, None],
+            mode="lines",
+            line=dict(width=0.5 + 4.0 * abs(c), color="rgba(140,140,140,0.65)"),
+            hoverinfo="none",
+            showlegend=False,
+        )
+        fig.add_scatter(
+            x=[(x0 + x1) / 2], y=[(y0 + y1) / 2],
+            mode="markers",
+            marker=dict(size=14, opacity=0),
+            hovertemplate=f"<b>{u} – {v}</b><br>Correlation: {c:+.3f}<extra></extra>",
+            showlegend=False,
+        )
+
+    comm_groups: dict[int, list[str]] = {}
+    for node in mst.nodes():
+        comm_groups.setdefault(communities.get(node, 0), []).append(node)
+
+    for cid, nodes in sorted(comm_groups.items()):
+        fig.add_scatter(
+            x=[pos[n][0] for n in nodes],
+            y=[pos[n][1] for n in nodes],
+            mode="markers+text",
+            text=nodes,
+            textposition="top center",
+            textfont=dict(size=10, color="#333333"),
+            hovertemplate=[
+                f"<b>{n}</b><br>{names.get(n, '')}<br>Community {cid + 1}<extra></extra>"
+                for n in nodes
+            ],
+            marker=dict(size=20, color=comm_colors[cid], line=dict(width=2, color="white")),
+            name=f"Community {cid + 1}",
+            legendgroup=f"comm_{cid}",
+        )
+
+    fig.update_layout(
+        title=title,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, visible=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, visible=False),
+        plot_bgcolor="white",
+        height=460,
+        margin=dict(t=80, b=20, l=20, r=20),
+    )
+    return fig
+
+
 def rolling_loadings_heatmap(loadings_df: "pd.DataFrame", title: str = "Rolling PC1 Loadings") -> go.Figure:
     """Heatmap of rolling loadings: x=date, y=ticker/name, colour=loading value."""
     fig = px.imshow(
